@@ -15,6 +15,7 @@ from gitfourchette.nav import NavLocator
 from gitfourchette.porcelain import *
 from gitfourchette.qt import *
 from gitfourchette.tasks.repotask import AbortTask, RepoTask, TaskPrereqs, TaskEffects
+from gitfourchette.tasks.stashtasks import ApplyStash
 from gitfourchette.toolbox import *
 
 logger = logging.getLogger(__name__)
@@ -539,6 +540,7 @@ class MergeBranch(RepoTask):
         assert isinstance(target, Oid), "branch isn't a direct reference!"
         analysis, pref = self.repo.merge_analysis(target)
         wantMergeCommit = True
+        stashAndReapply = False
 
         yield from self.flowEnterUiThread()
         logger.info(f"Merge analysis: {repr(analysis)} {repr(pref)}")
@@ -568,6 +570,10 @@ class MergeBranch(RepoTask):
         elif analysis == MergeAnalysis.FASTFORWARD | MergeAnalysis.NORMAL:
             if silentFastForward:
                 wantMergeCommit = False
+                if len(self.repo.get_unstaged_changes()) > 0:
+                    stashAndReapply = yield from self.flowConfirm("Unstaged files!", "Do you want to stash and reapply unstaged files?", verb="Yes", cancelText="Cancel")
+                    if not stashAndReapply:
+                        return
             else:
                 wantMergeCommit = yield from self.confirmFastForward(myShorthand, theirShorthand, target, autoFastForwardOptionName)
 
@@ -585,6 +591,11 @@ class MergeBranch(RepoTask):
         # -----------------------------------------------------------
         # Actually perform the fast-forward or the merge
 
+        if stashAndReapply:
+            files = list(self.repo.status().keys())
+            stashOid = self.repo.create_stash("auto stash", files)
+            self.repo.restore_files_from_head(files)
+
         yield from self._withGit(wantMergeCommit, theirShorthand)
 
         if wantMergeCommit:
@@ -592,6 +603,9 @@ class MergeBranch(RepoTask):
             self.postStatus = _("Merging {0} into {1}.", tquo(theirShorthand), tquo(myShorthand))
         else:
             self.postStatus = _("Branch {0} fast-forwarded to {1}.", tquo(myShorthand), tquo(theirShorthand))
+
+        if stashAndReapply:
+            yield from ApplyStash.flow(self, stashCommitId=stashOid, silent=True)
 
     def confirmFastForward(self, myShorthand: str, theirShorthand: str, target: Oid, autoFastForwardOptionName: str):
         title = _("Fast-forwarding possible")
@@ -631,7 +645,8 @@ class MergeBranch(RepoTask):
         )
 
         if driver.exitCode() != 0:
-            logger.warning(f"git merge error scrollback: {driver.stderrScrollback()}")
+            self.postStatus = _("Git error")
+            raise AbortTask(driver.stderrScrollback())
 
         if wantMergeCommit:
             self.repoModel.prefs.draftCommitMessage = self.repo.message_without_conflict_comments

@@ -84,7 +84,7 @@ class ApplyStash(RepoTask):
         # libgit2 will refuse to apply a stash if there are conflicts (NoConflicts)
         return TaskPrereqs.NoConflicts | TaskPrereqs.NoStagedChanges
 
-    def flow(self, stashCommitId: Oid, tickDelete=True):
+    def flow(self, stashCommitId: Oid, tickDelete=True, silent=False):
         stashCommit: Commit = self.repo.peel_commit(stashCommitId)
         stashMessage = strip_stash_message(stashCommit.message)
 
@@ -99,15 +99,18 @@ class ApplyStash(RepoTask):
             okButton = qmb.button(QMessageBox.StandardButton.Ok)
             okButton.setText(_("&Apply && Delete") if ticked else _("&Apply && Keep"))
 
-        deleteCheckBox = QCheckBox(_("&Delete the stash if it applies cleanly"), qmb)
-        deleteCheckBox.clicked.connect(updateButtonText)
-        deleteCheckBox.setChecked(tickDelete)
-        qmb.setCheckBox(deleteCheckBox)
-        updateButtonText(tickDelete)
-        yield from self.flowDialog(qmb)
+        if silent:
+            deleteAfterApply = True
+        else:
+            deleteCheckBox = QCheckBox(_("&Delete the stash if it applies cleanly"), qmb)
+            deleteCheckBox.clicked.connect(updateButtonText)
+            deleteCheckBox.setChecked(tickDelete)
+            qmb.setCheckBox(deleteCheckBox)
+            updateButtonText(tickDelete)
+            yield from self.flowDialog(qmb)
 
-        deleteAfterApply = deleteCheckBox.isChecked()
-        qmb.deleteLater()
+            deleteAfterApply = deleteCheckBox.isChecked()
+            qmb.deleteLater()
 
         self.jumpTo = NavLocator.inWorkdir()
         self.effects |= TaskEffects.Workdir
