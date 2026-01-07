@@ -645,8 +645,7 @@ class MergeBranch(RepoTask):
         )
 
         if driver.exitCode() != 0:
-            self.postStatus = _("Git error")
-            raise AbortTask(driver.stderrScrollback())
+            logger.warning(f"git merge error scrollback: {driver.stderrScrollback()}")
 
         if wantMergeCommit:
             self.repoModel.prefs.draftCommitMessage = self.repo.message_without_conflict_comments
